@@ -1,0 +1,16 @@
+[package]
+name = "launcher"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+fuse-rust = "0.3.0"
+dns-lookup = "1.0"
+filemagic = "*"
+url = "2.3"
+# regex = "1"
+tui = "0.19"
+crossterm = "0.25"
+rayon = "1.5"
+fuzzy-matcher = "*"
+

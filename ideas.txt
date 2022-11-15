@@ -1,0 +1,22 @@
+Launcher
+
+
+open files
+	if text files open with nvim / hx / config.editor
+	otherwise use open command
+	fuzzy search completion
+
+search web
+	parse query
+		if url, directly open
+		if plain text, push back to google search query url
+
+open app
+	search in $PATH /Applications /System/Applications /System/Applications/Utilities
+	fuzzy search
+	
+colon for command
+	:term commanda agrs...
+		opens config.terminal and run command
+	:config open config file with config.editor
+	:find search file
