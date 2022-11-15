@@ -3,15 +3,17 @@ mod frontend;
 
 use backend::*;
 use frontend::*;
-use std::error::Error;
-use std::io::Read;
-use std::{io, thread};
+use std::{error::Error, io, io::Read};
+#[macro_use]
+extern crate lazy_static;
 
 fn main() -> Result<(), Box<dyn Error>> {
     let mut app = App::init("Query>")?;
-    let config = Config::default();
+
+    let config = Config::from_file(&CONFIG_PATH);
     let mut cache = Cache::init(&config);
     let magic_cookie = new_magic_cookie()?;
+
     loop {
         let mut index = None;
         let results = Query::from(&app.get_query())

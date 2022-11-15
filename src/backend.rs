@@ -3,49 +3,64 @@ use filemagic::{flags::Flags, FileMagicError, Magic};
 use fuse_rust::Fuse;
 // use regex::Regex;
 use fuzzy_matcher::{skim::SkimMatcherV2, FuzzyMatcher};
+use lazy_static;
 use rayon::prelude::*;
+use serde_derive::{Deserialize, Serialize};
 use std::{
     cmp::Reverse,
     collections::HashMap,
     env,
     error::Error,
-    fs, io, path,
+    fs, io,
+    path::Path,
     process::{Child, Command},
 };
 use url::Url;
 
 // TODO: use config file
-pub struct Config<'a> {
-    app_locations: Vec<&'a str>,
-    editor: &'a str,       // path to binary
-    open_term: &'a str,    // command to spawn a terminal to run command
-    results_len: usize,    // show how many results
-    fuzzy_engine: &'a str, // 'fuse' or 'skim'
+
+lazy_static! {
+    pub static ref CONFIG_PATH: String =
+        env::var("HOME").unwrap() + "/.config/launcher/launcher.toml";
 }
 
-impl<'a> Config<'a> {
-    pub fn new() -> Config<'a> {
+#[derive(Deserialize, Serialize)]
+pub struct Config {
+    app_locations: Vec<String>,
+    editor: String,       // path to binary
+    results_len: usize,   // show how many results
+    fuzzy_engine: String, // 'fuse' or 'skim'. Use skim if fuse is too slow
+}
+
+impl Config {
+    pub fn default() -> Config {
         Config {
-            app_locations: vec![],
-            editor: "",
-            open_term: "",
-            results_len: 0,
-            fuzzy_engine: "",
+            app_locations: vec![
+                "/Applications".to_string(),
+                "/System/Applications".to_string(),
+                "/System/Applications/Utilities".to_string(),
+            ],
+            editor: "hx".to_string(),
+            results_len: 20,
+            fuzzy_engine: "skim".to_string(),
         }
     }
 
-    pub fn default() -> Config<'a> {
-        Config {
-            app_locations: vec![
-                "/Applications",
-                "/System/Applications",
-                "/System/Applications/Utilities",
-            ],
-            editor: "hx",
-            open_term: "alacritty -e",
-            results_len: 20,
-            fuzzy_engine: "fuse",
+    pub fn from_file(path: &str) -> Config {
+        if let Ok(s) = fs::read_to_string(path) {
+            toml::from_str(&s).unwrap_or(Config::default())
+        } else {
+            Config::default()
         }
+    }
+
+    pub fn write_to_file(&self, path: &str) -> Result<(), Box<dyn Error>> {
+        let path = Path::new(path);
+        if let Some(p) = path.parent() {
+            fs::create_dir_all(p)?;
+        };
+        fs::write(path, toml::to_string(self)?.as_bytes())?;
+        Ok(())
     }
 }
 
@@ -80,13 +95,11 @@ impl LauncherResult {
                     .file(path)
                     .expect(&format!("failed to check magic of file `{}`", path));
                 // is text file?
+                // FIXME: cannot detect text file
                 if ["Text", "JSON", "CSV"].iter().any(|s| magic.contains(s)) {
-                    spawn_process(&format!(
-                        "{} '{}' '{}'",
-                        config.open_term, config.editor, path
-                    ))?;
+                    spawn_process(&format!("{} '{}'", config.editor, path))?.wait()?;
                 } else {
-                    spawn_process(&format!("open '{}'", path))?;
+                    spawn_process(&format!("open '{}'", path))?.wait()?;
                 }
             }
         };
@@ -100,6 +113,10 @@ impl LauncherResult {
                     // BFS file directory
                     Ok(vec![])
                 }
+                "config" => {
+                    // open config file
+                    Ok(vec![LauncherResult::File(CONFIG_PATH.clone())])
+                }
                 _ => Ok(vec![self]),
             }
         } else {
@@ -109,7 +126,7 @@ impl LauncherResult {
 
     pub fn get_string(&self) -> String {
         match self {
-            LauncherResult::Command(cmd, param) => format!("{} {}", cmd, param),
+            LauncherResult::Command(cmd, param) => format!(":{} {}", cmd, param),
             LauncherResult::Url(url) => format!("Url: {}", url),
             LauncherResult::App(app) => format!("App: {}", app),
             LauncherResult::Bin(bin) => format!("Bin: {}", bin),
@@ -155,7 +172,7 @@ impl Cache {
     fn add_dir<T>(&mut self, locations: T, r#type: FileEntryType)
     where
         T: IntoIterator,
-        <T as IntoIterator>::Item: AsRef<path::Path>,
+        <T as IntoIterator>::Item: AsRef<Path>,
     {
         for location in locations {
             if let Ok(dir) = fs::read_dir(location) {
@@ -207,7 +224,7 @@ impl Cache {
         self.search_results.insert(query.to_string(), results);
     }
 
-    fn search<'a>(&'a self, query: &str, kind: &str, config: &Config) -> Vec<LauncherResult> {
+    fn search(&self, query: &str, kind: &str, config: &Config) -> Vec<LauncherResult> {
         let mut results: Vec<LauncherResult> = vec![];
 
         let fuzzy_search_results: Vec<&FileEntry> = match kind {
@@ -313,18 +330,11 @@ impl Query {
                         .prerun_command(cache)?,
                 );
             } else {
-                results.push(LauncherResult::Command(
-                    query[1..].trim().to_string(),
-                    String::new(),
-                ));
+                results.extend(
+                    LauncherResult::Command(query[1..].trim().to_string(), String::new())
+                        .prerun_command(cache)?,
+                );
             }
-            cache.add_results(query, results.clone());
-            return Ok(results);
-        }
-
-        // Url
-        if let Ok(_) = lookup_host(query) {
-            results.push(LauncherResult::Url(Query::fix_url(query)));
             cache.add_results(query, results.clone());
             return Ok(results);
         }
@@ -332,15 +342,19 @@ impl Query {
         // fuzzy search app / bin / opened files
         // only search of query.len() < 15
         if query.len() < 15 {
-            results.extend(cache.search(query, config.fuzzy_engine, config));
+            results.extend(cache.search(query, &config.fuzzy_engine, config));
         }
 
-        if results.len() == 0 {
-            results.push(LauncherResult::Command(
-                "search".to_string(),
-                query.to_string(),
-            ));
+        // Url
+        if let Ok(_) = lookup_host(query) {
+            results.push(LauncherResult::Url(Query::fix_url(query)));
+            cache.add_results(query, results.clone());
         }
+
+        results.push(LauncherResult::Command(
+            "search".to_string(),
+            query.to_string(),
+        ));
 
         cache.add_results(query, results.clone());
         return Ok(results);

@@ -1,13 +1,18 @@
 use crate::backend::LauncherResult;
 use crossterm::{
-    event::{read, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers},
+    cursor,
+    event::{poll, read, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers},
     execute,
-    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
+    terminal::{
+        disable_raw_mode, enable_raw_mode, Clear, ClearType, EnterAlternateScreen,
+        LeaveAlternateScreen,
+    },
 };
 use std::{
     error::Error,
     io::{self, Stdout},
 };
+use std::{io::Write, time::Duration};
 use tui::{
     backend::CrosstermBackend,
     layout::{Constraint, Direction, Layout},
@@ -31,6 +36,11 @@ pub struct App {
 
 impl App {
     pub fn init(prompt: &str) -> Result<App, io::Error> {
+        std::panic::set_hook(Box::new(move |x| {
+            cleanup_terminal();
+            write!(io::stdout(), "{:?}", x).unwrap();
+        }));
+
         enable_raw_mode()?;
         let mut stdout = io::stdout();
         execute!(stdout, EnterAlternateScreen)?;
@@ -96,6 +106,9 @@ impl App {
 
     pub fn wait_input(&mut self, index: &mut Option<usize>) -> Result<bool, Box<dyn Error>> {
         loop {
+            if poll(Duration::from_millis(417))? == false {
+                return Ok(false);
+            }
             match read()? {
                 Event::Key(KeyEvent {
                     code,
@@ -174,7 +187,7 @@ impl App {
                             move_selection!(self.list_len, self.list_state, i, 1);
                             return Ok(false);
                         }
-                        _ => continue,
+                        _ => return Ok(false),
                     }
                 }
                 _ => {}
@@ -215,4 +228,21 @@ impl Drop for App {
     fn drop(&mut self) {
         self.exit()
     }
+}
+
+fn cleanup_terminal() {
+    let mut stdout = io::stdout();
+
+    // Needed for when ytop is run in a TTY since TTYs don't actually have an alternate screen.
+    // Must be executed before attempting to leave the alternate screen so that it only modifies the
+    // 		primary screen if we are running in a TTY.
+    // If not running in a TTY, then we just end up modifying the alternate screen which should have
+    // 		no effect.
+    execute!(stdout, cursor::MoveTo(0, 0)).unwrap();
+    execute!(stdout, Clear(ClearType::All)).unwrap();
+
+    execute!(stdout, LeaveAlternateScreen).unwrap();
+    execute!(stdout, cursor::Show).unwrap();
+
+    disable_raw_mode().unwrap();
 }
