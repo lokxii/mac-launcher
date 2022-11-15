@@ -95,8 +95,10 @@ impl LauncherResult {
                     .file(path)
                     .expect(&format!("failed to check magic of file `{}`", path));
                 // is text file?
-                // FIXME: cannot detect text file
-                if ["Text", "JSON", "CSV"].iter().any(|s| magic.contains(s)) {
+                if ["text", "json", "csv"]
+                    .iter()
+                    .any(|s| magic.to_lowercase().contains(s))
+                {
                     spawn_process(&format!("{} '{}'", config.editor, path))?.wait()?;
                 } else {
                     spawn_process(&format!("open '{}'", path))?.wait()?;
