@@ -16,6 +16,7 @@ use std::{
     io,
     path::Path,
     process::{Child, Command},
+    sync::Arc,
     thread,
 };
 use url::Url;
@@ -162,8 +163,8 @@ impl Hash for FileEntry {
 
 #[derive(Debug, Clone)]
 pub struct Cache {
-    pub file_entries: HashSet<FileEntry>,
-    pub search_results: HashMap<String, Vec<LauncherResult>>,
+    pub file_entries: HashSet<Arc<FileEntry>>,
+    pub search_results: HashMap<String, Arc<Vec<LauncherResult>>>,
 }
 
 macro_rules! into_string {
@@ -203,11 +204,11 @@ impl Cache {
                     } else {
                         name
                     };
-                    self.file_entries.insert(FileEntry {
+                    self.file_entries.insert(Arc::new(FileEntry {
                         file_type: r#type,
                         full_path: into_string!(path.path()),
                         name,
-                    });
+                    }));
                 }
             }
         }
@@ -223,7 +224,7 @@ impl Cache {
         return cache;
     }
 
-    pub fn get_results(&self, query: &str) -> Option<Vec<LauncherResult>> {
+    pub fn get_results(&self, query: &str) -> Option<Arc<Vec<LauncherResult>>> {
         if self.search_results.contains_key(query) {
             return Some(self.search_results[query].clone());
         } else {
@@ -232,22 +233,26 @@ impl Cache {
     }
 
     pub fn add_results(&mut self, query: &str, results: Vec<LauncherResult>) {
-        self.search_results.insert(query.to_string(), results);
+        self.search_results
+            .insert(query.to_string(), Arc::new(results));
     }
 
     fn search(&self, query: &str, kind: &str, config: &Config) -> Vec<LauncherResult> {
         let mut results: Vec<LauncherResult> = vec![];
 
-        let fuzzy_search_results: Vec<&FileEntry> = match kind {
+        let fuzzy_search_results: Vec<Arc<FileEntry>> = match kind {
             "skim" => {
                 let skim = SkimMatcherV2::default();
                 let mut fuzzy_search_results = self
                     .file_entries
                     .par_iter()
-                    .filter_map(|x| Some((skim.fuzzy_match(&x.name, query)?, x)))
-                    .collect::<Vec<(i64, &FileEntry)>>();
+                    .filter_map(|x| Some((skim.fuzzy_match(&x.name, query)?, Arc::clone(x))))
+                    .collect::<Vec<(i64, Arc<FileEntry>)>>();
                 fuzzy_search_results.sort_unstable_by_key(|e| Reverse(e.0));
-                fuzzy_search_results.iter().map(|e| e.1).collect()
+                fuzzy_search_results
+                    .iter()
+                    .map(|e| Arc::clone(&e.1))
+                    .collect()
             }
 
             "fuse" => {
@@ -261,7 +266,7 @@ impl Cache {
                     .par_iter()
                     .filter_map(|x| {
                         if query.len() <= x.name.len() {
-                            Some((fuse.search(pattern.as_ref(), &x.name)?, x))
+                            Some((fuse.search(pattern.as_ref(), &x.name)?, Arc::clone(x)))
                         } else {
                             None
                         }
@@ -277,9 +282,12 @@ impl Cache {
                             * 1000.0;
                         ((e.0.score * 1000.0) as i64, coverage as i64, e.1)
                     })
-                    .collect::<Vec<(i64, i64, &FileEntry)>>();
+                    .collect::<Vec<(i64, i64, Arc<FileEntry>)>>();
                 fuzzy_search_results.sort_unstable_by_key(|e| (e.0, e.1));
-                fuzzy_search_results.iter().map(|e| e.2).collect()
+                fuzzy_search_results
+                    .iter()
+                    .map(|e| Arc::clone(&e.2))
+                    .collect()
             }
             _ => {
                 panic!("Invalid kind");
@@ -347,7 +355,7 @@ impl Query {
 
         // Url
         let query_clone = query.to_string().clone();
-        let lookup_host_thread = thread::spawn(move || lookup_host(query_clone.as_str()));
+        let lookup_host_thread = thread::spawn(move || lookup_host(&query_clone));
 
         // fuzzy search app / bin / opened files
         // only search of query.len() < 15
@@ -361,7 +369,7 @@ impl Query {
         }
 
         if let Ok(Ok(_)) = lookup_host_thread.join() {
-            results.push(LauncherResult::Url(query.to_string()));
+            results.push(LauncherResult::Url(Self::fix_url(query)));
         }
 
         results.push(LauncherResult::Command(

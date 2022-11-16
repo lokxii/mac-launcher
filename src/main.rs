@@ -67,15 +67,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                                 let inner = backend_cache.lock().unwrap().clone();
                                 Query::from(s.as_str()).parse(&config, inner).unwrap()
                             };
-                            let mut inner = backend_cache.lock().unwrap();
-                            new_cache.file_entries.drain().for_each(|f| {
-                                (*inner).file_entries.insert(f);
-                            });
-                            new_cache.search_results.drain().for_each(|f| {
-                                if (*inner).search_results.contains_key(&f.0) == false {
-                                    (*inner).search_results.insert(f.0, f.1);
-                                }
-                            });
+                            *backend_cache.lock().unwrap() = new_cache;
                         });
                     }
                 }
@@ -85,7 +77,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     });
 
     // UI
-    let mut results: Vec<LauncherResult> = vec![];
+    let mut results: Arc<Vec<LauncherResult>> = Arc::new(vec![]);
     loop {
         let mut index = None;
         query_tx.send(app.get_query()).unwrap();
