@@ -32,6 +32,7 @@ pub struct App {
     list_len: usize,
     list_state: ListState,
     completion: bool,
+    completion_content: Option<String>,
 }
 
 impl App {
@@ -55,12 +56,15 @@ impl App {
             list_len: 0,
             list_state: ListState::default(),
             completion: false,
+            completion_content: None,
         })
     }
 
     pub fn update<'a>(&'a mut self, list: &'a [LauncherResult]) -> Result<&'a mut App, io::Error> {
+        let list = if self.query.is_empty() { &[] } else { list };
         self.list_len = list.len();
-        self.select_first_item();
+        self.fix_selection();
+        let mut completion_content = None;
         self.terminal.draw(|f| {
             let chunks = Layout::default()
                 .direction(Direction::Vertical)
@@ -68,12 +72,22 @@ impl App {
                 .split(f.size());
             // input field
             let block = Block::default().borders(Borders::ALL);
-            let text = self.prompt.clone() + &self.query;
-            let input_field = Text::from(Span::from(if self.completion {
-                list[self.list_state.selected().unwrap()].get_string()
+            completion_content = if self.completion {
+                Some(
+                    list[self.list_state.selected().unwrap()]
+                        .get_string()
+                        .split_once('|')
+                        .unwrap()
+                        .1
+                        .trim()
+                        .to_string(),
+                )
             } else {
-                text
-            }));
+                None
+            };
+            let input_field =
+                self.prompt.clone() + &completion_content.clone().unwrap_or(self.query.clone());
+            let input_field = Text::from(Span::from(input_field));
             let paragraph = Paragraph::new(input_field).block(block);
             f.render_widget(paragraph, chunks[0]);
             if self.completion {
@@ -97,16 +111,22 @@ impl App {
                 )
                 .highlight_symbol(">> ");
             f.render_stateful_widget(items, chunks[1], &mut self.list_state);
-
-            // not completion
-            self.completion = false;
         })?;
+        self.completion_content = completion_content;
         Ok(self)
+    }
+
+    fn replace_query(&mut self) {
+        if let Some(s) = &self.completion_content {
+            self.query = s.to_string();
+            self.cursor_index = self.query.len();
+            self.completion = false;
+        }
     }
 
     pub fn wait_input(&mut self, index: &mut Option<usize>) -> Result<bool, Box<dyn Error>> {
         loop {
-            if poll(Duration::from_millis(417))? == false {
+            if poll(Duration::from_millis(30))? == false {
                 return Ok(false);
             }
             match read()? {
@@ -138,6 +158,7 @@ impl App {
                     }
                     match code {
                         KeyCode::Char(ch) => {
+                            self.replace_query();
                             if self.cursor_index == self.query.len() {
                                 self.query.push(ch);
                             } else {
@@ -147,6 +168,7 @@ impl App {
                             return Ok(false);
                         }
                         KeyCode::Backspace | KeyCode::Delete => {
+                            self.completion = false;
                             if self.cursor_index > 0 {
                                 self.query = self.query[0..self.cursor_index - 1].to_string()
                                     + &self.query[self.cursor_index..];
@@ -163,12 +185,14 @@ impl App {
                             return Ok(false);
                         }
                         KeyCode::Left => {
+                            self.replace_query();
                             if self.cursor_index > 0 {
                                 self.cursor_index -= 1;
                             }
                             return Ok(false);
                         }
                         KeyCode::Right => {
+                            self.replace_query();
                             if self.cursor_index < self.query.len() {
                                 self.cursor_index += 1;
                             }
@@ -187,6 +211,10 @@ impl App {
                             move_selection!(self.list_len, self.list_state, i, 1);
                             return Ok(false);
                         }
+                        KeyCode::Esc => {
+                            // cancel completion
+                            self.completion = false;
+                        }
                         _ => return Ok(false),
                     }
                 }
@@ -204,8 +232,8 @@ impl App {
         }
     }
 
-    pub fn get_query(&self) -> &str {
-        return &self.query;
+    pub fn get_query(&self) -> String {
+        return self.query.clone();
     }
 
     pub fn set_prompt(&mut self, prompt: &str) -> &mut App {
@@ -213,10 +241,15 @@ impl App {
         self
     }
 
-    fn select_first_item(&mut self) {
+    fn fix_selection(&mut self) {
         if self.list_len > 0 {
-            if let None = self.list_state.selected() {
-                self.list_state.select(Some(0));
+            match self.list_state.selected() {
+                Some(i) => {
+                    if i >= self.list_len {
+                        self.list_state.select(Some(self.list_len - 1));
+                    }
+                }
+                None => self.list_state.select(Some(0)),
             }
         } else {
             self.list_state.select(None);

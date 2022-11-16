@@ -8,12 +8,15 @@ use rayon::prelude::*;
 use serde_derive::{Deserialize, Serialize};
 use std::{
     cmp::Reverse,
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     env,
     error::Error,
-    fs, io,
+    fs,
+    hash::{Hash, Hasher},
+    io,
     path::Path,
     process::{Child, Command},
+    thread,
 };
 use url::Url;
 
@@ -108,7 +111,7 @@ impl LauncherResult {
         return Ok(false);
     }
 
-    fn prerun_command(self, cache: &mut Cache) -> io::Result<Vec<LauncherResult>> {
+    fn prerun_command(self, cache: &Cache) -> io::Result<Vec<LauncherResult>> {
         if let LauncherResult::Command(cmd, param) = &self {
             match cmd.as_str() {
                 "find" => {
@@ -128,33 +131,39 @@ impl LauncherResult {
 
     pub fn get_string(&self) -> String {
         match self {
-            LauncherResult::Command(cmd, param) => format!("(Cmd) {} {}", cmd, param),
-            LauncherResult::Url(url) => format!("(Url) {}", url),
-            LauncherResult::App(app) => format!("(App) {}", app),
-            LauncherResult::Bin(bin) => format!("(Bin) {}", bin),
-            LauncherResult::File(file) => format!("(File) {}", file),
+            LauncherResult::Command(cmd, param) => format!("Cmd | :{} {}", cmd, param),
+            LauncherResult::Url(url) => format!("Url | {}", url),
+            LauncherResult::App(app) => format!("App | {}", app),
+            LauncherResult::Bin(bin) => format!("Bin | {}", bin),
+            LauncherResult::File(file) => format!("File | {}", file),
         }
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FileEntryType {
     App,
     Bin,
     File,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FileEntry {
     file_type: FileEntryType,
     full_path: String,
     name: String,
 }
 
-#[derive(Debug)]
+impl Hash for FileEntry {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.full_path.hash(state);
+    }
+}
+
+#[derive(Debug, Clone)]
 pub struct Cache {
-    file_entries: Vec<FileEntry>,
-    search_results: HashMap<String, Vec<LauncherResult>>,
+    pub file_entries: HashSet<FileEntry>,
+    pub search_results: HashMap<String, Vec<LauncherResult>>,
 }
 
 macro_rules! into_string {
@@ -166,7 +175,7 @@ macro_rules! into_string {
 impl Cache {
     pub fn new() -> Cache {
         return Cache {
-            file_entries: vec![],
+            file_entries: HashSet::new(),
             search_results: HashMap::new(),
         };
     }
@@ -194,11 +203,11 @@ impl Cache {
                     } else {
                         name
                     };
-                    self.file_entries.push(FileEntry {
+                    self.file_entries.insert(FileEntry {
                         file_type: r#type,
                         full_path: into_string!(path.path()),
                         name,
-                    })
+                    });
                 }
             }
         }
@@ -214,7 +223,7 @@ impl Cache {
         return cache;
     }
 
-    fn get_results(&self, query: &str) -> Option<Vec<LauncherResult>> {
+    pub fn get_results(&self, query: &str) -> Option<Vec<LauncherResult>> {
         if self.search_results.contains_key(query) {
             return Some(self.search_results[query].clone());
         } else {
@@ -222,7 +231,7 @@ impl Cache {
         }
     }
 
-    fn add_results(&mut self, query: &str, results: Vec<LauncherResult>) {
+    pub fn add_results(&mut self, query: &str, results: Vec<LauncherResult>) {
         self.search_results.insert(query.to_string(), results);
     }
 
@@ -282,15 +291,14 @@ impl Cache {
         } else {
             config.results_len
         };
-        results.extend(
-            fuzzy_search_results[0..end_index]
-                .iter()
-                .map(|r| match r.file_type {
-                    FileEntryType::App => LauncherResult::App(r.full_path.clone()),
-                    FileEntryType::Bin => LauncherResult::Bin(r.full_path.clone()),
-                    FileEntryType::File => LauncherResult::File(r.full_path.clone()),
-                }),
-        );
+        // FIXME: does it change order?
+        results.par_extend(fuzzy_search_results[0..end_index].par_iter().map(
+            |r| match r.file_type {
+                FileEntryType::App => LauncherResult::App(r.full_path.clone()),
+                FileEntryType::Bin => LauncherResult::Bin(r.full_path.clone()),
+                FileEntryType::File => LauncherResult::File(r.full_path.clone()),
+            },
+        ));
         return results;
     }
 }
@@ -306,18 +314,14 @@ impl Query {
         Query(s.to_string())
     }
 
-    pub fn parse<'a>(
-        &self,
-        config: &Config,
-        cache: &'a mut Cache,
-    ) -> io::Result<Vec<LauncherResult>> {
+    pub fn parse(&self, config: &Config, mut cache: Cache) -> io::Result<Cache> {
         let query = self.0.trim();
         if query.is_empty() {
-            return Ok(vec![]);
+            return Ok(cache);
         }
 
-        if let Some(results) = cache.get_results(query) {
-            return Ok(results);
+        if let Some(_) = cache.get_results(query) {
+            return Ok(cache);
         }
         let mut results: Vec<LauncherResult> = vec![];
 
@@ -329,17 +333,21 @@ impl Query {
             if let Some((cmd, param)) = query[1..].trim().split_once(' ') {
                 results.extend(
                     LauncherResult::Command(cmd.trim().to_string(), param.trim().to_string())
-                        .prerun_command(cache)?,
+                        .prerun_command(&cache)?,
                 );
             } else {
                 results.extend(
                     LauncherResult::Command(query[1..].trim().to_string(), String::new())
-                        .prerun_command(cache)?,
+                        .prerun_command(&cache)?,
                 );
             }
-            cache.add_results(query, results.clone());
-            return Ok(results);
+            cache.add_results(query, results);
+            return Ok(cache);
         }
+
+        // Url
+        let query_clone = query.to_string().clone();
+        let lookup_host_thread = thread::spawn(move || lookup_host(query_clone.as_str()));
 
         // fuzzy search app / bin / opened files
         // only search of query.len() < 15
@@ -347,14 +355,13 @@ impl Query {
             results.extend(cache.search(query, &config.fuzzy_engine, config));
         }
 
-        // Url
-        if let Ok(_) = lookup_host(query) {
-            results.push(LauncherResult::Url(Query::fix_url(query)));
-        }
-
         // File path
         if Path::new(query).exists() {
             results.push(LauncherResult::File(query.to_string()));
+        }
+
+        if let Ok(Ok(_)) = lookup_host_thread.join() {
+            results.push(LauncherResult::Url(query.to_string()));
         }
 
         results.push(LauncherResult::Command(
@@ -362,8 +369,8 @@ impl Query {
             query.to_string(),
         ));
 
-        cache.add_results(query, results.clone());
-        return Ok(results);
+        cache.add_results(query, results);
+        return Ok(cache);
     }
 
     // TODO: more rules
