@@ -128,11 +128,11 @@ impl LauncherResult {
 
     pub fn get_string(&self) -> String {
         match self {
-            LauncherResult::Command(cmd, param) => format!(":{} {}", cmd, param),
-            LauncherResult::Url(url) => format!("Url: {}", url),
-            LauncherResult::App(app) => format!("App: {}", app),
-            LauncherResult::Bin(bin) => format!("Bin: {}", bin),
-            LauncherResult::File(file) => format!("File: {}", file),
+            LauncherResult::Command(cmd, param) => format!("(Cmd) {} {}", cmd, param),
+            LauncherResult::Url(url) => format!("(Url) {}", url),
+            LauncherResult::App(app) => format!("(App) {}", app),
+            LauncherResult::Bin(bin) => format!("(Bin) {}", bin),
+            LauncherResult::File(file) => format!("(File) {}", file),
         }
     }
 }
@@ -350,7 +350,11 @@ impl Query {
         // Url
         if let Ok(_) = lookup_host(query) {
             results.push(LauncherResult::Url(Query::fix_url(query)));
-            cache.add_results(query, results.clone());
+        }
+
+        // File path
+        if Path::new(query).exists() {
+            results.push(LauncherResult::File(query.to_string()));
         }
 
         results.push(LauncherResult::Command(
@@ -389,7 +393,7 @@ pub fn new_magic_cookie() -> Result<Magic, FileMagicError> {
 }
 
 fn spawn_process(s: &str) -> io::Result<Child> {
-    return Command::new("bash").arg("-c").arg(s).spawn();
+    return Command::new("bash").arg("-l").arg("-c").arg(s).spawn();
 }
 
 fn run_command(cmd: &str, param: &str) -> Result<bool, Box<dyn Error>> {
@@ -403,6 +407,10 @@ fn run_command(cmd: &str, param: &str) -> Result<bool, Box<dyn Error>> {
         }
         "exec" => {
             spawn_process(&format!("{}", param))?.wait()?;
+            Ok(true)
+        }
+        "update" => {
+            spawn_process("cd ~/program/launcher && cargo build --release")?.wait()?;
             Ok(true)
         }
         &_ => Ok(false),
