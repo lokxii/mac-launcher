@@ -425,7 +425,11 @@ fn run_command(cmd: &str, param: &str) -> Result<bool, Box<dyn Error>> {
             Ok(true)
         }
         "update" => {
-            spawn_process("cd ~/program/launcher && cargo build --release")?.wait()?;
+            spawn_process(&format!(
+                "cd {} && cargo build --release",
+                env!("CARGO_MANIFEST_DIR")
+            ))?
+            .wait()?;
             Ok(true)
         }
         &_ => Ok(false),

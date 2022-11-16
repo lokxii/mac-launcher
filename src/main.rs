@@ -58,10 +58,6 @@ fn main() -> Result<(), Box<dyn Error>> {
                     if s.is_empty() == false {
                         let config = Arc::clone(&config);
                         let backend_cache = Arc::clone(&backend_cache);
-                        // TODO:
-                        // lock cache, clone, unlock
-                        // do stuff
-                        // lock cache, update cache (resolve delta), unlock
                         thread::spawn(move || {
                             let mut new_cache = {
                                 let inner = backend_cache.lock().unwrap().clone();
