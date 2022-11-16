@@ -15,3 +15,7 @@ As **Launcher** does not listen to shortcut keys to start, it is best to use **L
 Example **skhd** rule
 
 `alt + shift - p : alacritty -e bash -lc /path/to/launcher`
+
+## Todo list
+- [ ] add shortcut commands
+- [ ] finish find command to find + open files
