@@ -34,15 +34,12 @@ fn main() -> Result<(), Box<dyn Error>> {
         let config = Arc::clone(&config);
         let magic_cookie = new_magic_cookie().unwrap();
         loop {
-            match select_rx.recv() {
-                Ok(r) => {
-                    if r.select(&*config, &magic_cookie).unwrap() {
-                        println!("<Press any key to exit>");
-                        io::stdin().lock().read_exact(&mut [0; 1]).unwrap();
-                    }
-                    break;
+            if let Ok(r) = select_rx.recv() {
+                if r.select(&*config, &magic_cookie).unwrap() {
+                    println!("<Press any key to exit>");
+                    io::stdin().lock().read_exact(&mut [0; 1]).unwrap();
                 }
-                Err(_) => {}
+                break;
             }
         }
     });
@@ -52,22 +49,17 @@ fn main() -> Result<(), Box<dyn Error>> {
         let config = Arc::clone(&backend_config);
         mutex!(backend_cache = Cache::init(&config));
 
-        loop {
-            match query_rx.recv() {
-                Ok(s) => {
-                    if s.is_empty() == false {
-                        let config = Arc::clone(&config);
-                        let backend_cache = Arc::clone(&backend_cache);
-                        thread::spawn(move || {
-                            let mut new_cache = {
-                                let inner = backend_cache.lock().unwrap().clone();
-                                Query::from(s.as_str()).parse(&config, inner).unwrap()
-                            };
-                            *backend_cache.lock().unwrap() = new_cache;
-                        });
-                    }
-                }
-                Err(_) => break,
+        while let Ok(s) = query_rx.recv() {
+            if !s.is_empty() {
+                let config = Arc::clone(&config);
+                let backend_cache = Arc::clone(&backend_cache);
+                thread::spawn(move || {
+                    let new_cache = {
+                        let inner = backend_cache.lock().unwrap().clone();
+                        Query::from(s.as_str()).parse(&config, inner).unwrap()
+                    };
+                    *backend_cache.lock().unwrap() = new_cache;
+                });
             }
         }
     });

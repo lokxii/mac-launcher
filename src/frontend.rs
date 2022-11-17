@@ -39,7 +39,7 @@ impl App {
     pub fn init(prompt: &str) -> Result<App, io::Error> {
         std::panic::set_hook(Box::new(move |x| {
             cleanup_terminal();
-            write!(io::stdout(), "{:?}", x).unwrap();
+            print!("{:?}", x);
         }));
 
         enable_raw_mode()?;
@@ -85,16 +85,15 @@ impl App {
             } else {
                 None
             };
-            let input_field =
-                self.prompt.clone() + &completion_content.clone().unwrap_or(self.query.clone());
+            let input_field = self.prompt.clone()
+                + &completion_content
+                    .clone()
+                    .unwrap_or_else(|| self.query.clone());
+            let len = input_field.len();
             let input_field = Text::from(Span::from(input_field));
             let paragraph = Paragraph::new(input_field).block(block);
             f.render_widget(paragraph, chunks[0]);
-            if self.completion {
-                f.set_cursor(1, 1);
-            } else {
-                f.set_cursor(1 + self.prompt.len() as u16 + self.cursor_index as u16, 1);
-            }
+            f.set_cursor(1 + len as u16, 1);
 
             // search result
             let items = list
@@ -126,99 +125,93 @@ impl App {
 
     pub fn wait_input(&mut self, index: &mut Option<usize>) -> Result<bool, Box<dyn Error>> {
         loop {
-            if poll(Duration::from_millis(30))? == false {
+            if !poll(Duration::from_millis(30))? {
                 return Ok(false);
             }
-            match read()? {
-                Event::Key(KeyEvent {
-                    code,
-                    modifiers,
-                    kind: KeyEventKind::Press | KeyEventKind::Repeat,
-                    state: _,
-                }) => {
-                    if code == KeyCode::Char('c') && modifiers.contains(KeyModifiers::CONTROL) {
-                        return Ok(true);
-                    }
-                    macro_rules! move_selection {
-                        ($list_len:expr, $state:expr, $i:expr, $dir:expr) => {
-                            if $list_len > 0 {
-                                $state.select(if let Some(i) = $state.selected() {
-                                    let i = i as i64 + $dir;
-                                    let i = if i < 0 {
-                                        $list_len - 1
-                                    } else {
-                                        i as usize % $list_len
-                                    };
-                                    Some(i)
-                                } else {
-                                    None
-                                })
-                            }
-                        };
-                    }
-                    match code {
-                        KeyCode::Char(ch) => {
-                            self.replace_query();
-                            if self.cursor_index == self.query.len() {
-                                self.query.push(ch);
-                            } else {
-                                self.query.insert(self.cursor_index, ch);
-                            }
-                            self.cursor_index += 1;
-                            return Ok(false);
-                        }
-                        KeyCode::Backspace | KeyCode::Delete => {
-                            self.completion = false;
-                            if self.cursor_index > 0 {
-                                self.query = self.query[0..self.cursor_index - 1].to_string()
-                                    + &self.query[self.cursor_index..];
-                                self.cursor_index -= 1;
-                            }
-                            return Ok(false);
-                        }
-                        KeyCode::Up => {
-                            move_selection!(self.list_len, self.list_state, i, -1);
-                            return Ok(false);
-                        }
-                        KeyCode::Down => {
-                            move_selection!(self.list_len, self.list_state, i, 1);
-                            return Ok(false);
-                        }
-                        KeyCode::Left => {
-                            self.replace_query();
-                            if self.cursor_index > 0 {
-                                self.cursor_index -= 1;
-                            }
-                            return Ok(false);
-                        }
-                        KeyCode::Right => {
-                            self.replace_query();
-                            if self.cursor_index < self.query.len() {
-                                self.cursor_index += 1;
-                            }
-                            return Ok(false);
-                        }
-                        KeyCode::Enter => {
-                            *index = self.list_state.selected();
-                            if let None = index {
-                                return Ok(false);
-                            } else {
-                                return Ok(true);
-                            }
-                        }
-                        KeyCode::Tab => {
-                            self.completion = true && self.list_len > 0;
-                            move_selection!(self.list_len, self.list_state, i, 1);
-                            return Ok(false);
-                        }
-                        KeyCode::Esc => {
-                            // cancel completion
-                            self.completion = false;
-                        }
-                        _ => return Ok(false),
-                    }
+            if let Event::Key(KeyEvent {
+                code,
+                modifiers,
+                kind: KeyEventKind::Press | KeyEventKind::Repeat,
+                state: _,
+            }) = read()?
+            {
+                if code == KeyCode::Char('c') && modifiers.contains(KeyModifiers::CONTROL) {
+                    return Ok(true);
                 }
-                _ => {}
+                macro_rules! move_selection {
+                    ($list_len:expr, $state:expr, $i:expr, $dir:expr) => {
+                        if $list_len > 0 {
+                            $state.select(if let Some(i) = $state.selected() {
+                                let i = i as i64 + $dir;
+                                let i = if i < 0 {
+                                    $list_len - 1
+                                } else {
+                                    i as usize % $list_len
+                                };
+                                Some(i)
+                            } else {
+                                None
+                            })
+                        }
+                    };
+                }
+                match code {
+                    KeyCode::Char(ch) => {
+                        self.replace_query();
+                        if self.cursor_index == self.query.len() {
+                            self.query.push(ch);
+                        } else {
+                            self.query.insert(self.cursor_index, ch);
+                        }
+                        self.cursor_index += 1;
+                        return Ok(false);
+                    }
+                    KeyCode::Backspace | KeyCode::Delete => {
+                        self.completion = false;
+                        if self.cursor_index > 0 {
+                            self.query = self.query[0..self.cursor_index - 1].to_string()
+                                + &self.query[self.cursor_index..];
+                            self.cursor_index -= 1;
+                        }
+                        return Ok(false);
+                    }
+                    KeyCode::Up => {
+                        move_selection!(self.list_len, self.list_state, i, -1);
+                        return Ok(false);
+                    }
+                    KeyCode::Down => {
+                        move_selection!(self.list_len, self.list_state, i, 1);
+                        return Ok(false);
+                    }
+                    KeyCode::Left => {
+                        self.replace_query();
+                        if self.cursor_index > 0 {
+                            self.cursor_index -= 1;
+                        }
+                        return Ok(false);
+                    }
+                    KeyCode::Right => {
+                        self.replace_query();
+                        if self.cursor_index < self.query.len() {
+                            self.cursor_index += 1;
+                        }
+                        return Ok(false);
+                    }
+                    KeyCode::Enter => {
+                        *index = self.list_state.selected();
+                        return Ok(!index.is_none());
+                    }
+                    KeyCode::Tab => {
+                        self.completion = self.list_len > 0;
+                        move_selection!(self.list_len, self.list_state, i, 1);
+                        return Ok(false);
+                    }
+                    KeyCode::Esc => {
+                        // cancel completion
+                        self.completion = false;
+                    }
+                    _ => return Ok(false),
+                }
             }
         }
     }

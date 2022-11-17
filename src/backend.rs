@@ -3,7 +3,6 @@ use filemagic::{flags::Flags, FileMagicError, Magic};
 use fuse_rust::Fuse;
 // use regex::Regex;
 use fuzzy_matcher::{skim::SkimMatcherV2, FuzzyMatcher};
-use lazy_static;
 use rayon::prelude::*;
 use serde_derive::{Deserialize, Serialize};
 use std::{
@@ -52,7 +51,7 @@ impl Config {
 
     pub fn from_file(path: &str) -> Config {
         if let Ok(s) = fs::read_to_string(path) {
-            toml::from_str(&s).unwrap_or(Config::default())
+            toml::from_str(&s).unwrap_or_else(|_| Config::default())
         } else {
             Config::default()
         }
@@ -82,7 +81,7 @@ impl LauncherResult {
     pub fn select(&self, config: &Config, magic_cookie: &Magic) -> Result<bool, Box<dyn Error>> {
         match self {
             Self::Command(cmd, param) => {
-                return Ok(run_command(cmd, param)?);
+                return run_command(cmd, param);
             }
             Self::Url(url) => {
                 spawn_process(&format!("open '{}'", url))?.wait()?;
@@ -97,7 +96,7 @@ impl LauncherResult {
             Self::File(path) => {
                 let magic = magic_cookie
                     .file(path)
-                    .expect(&format!("failed to check magic of file `{}`", path));
+                    .unwrap_or_else(|_| panic!("failed to check magic of file `{}`", path));
                 // is text file?
                 if ["text", "json", "csv"]
                     .iter()
@@ -256,8 +255,10 @@ impl Cache {
             }
 
             "fuse" => {
-                let mut fuse = Fuse::default();
-                fuse.threshold = 0.4;
+                let fuse = Fuse {
+                    threshold: 0.4,
+                    ..Default::default()
+                };
 
                 // TODO: use BTreeMap?
                 let pattern = fuse.create_pattern(query);
@@ -328,7 +329,7 @@ impl Query {
             return Ok(cache);
         }
 
-        if let Some(_) = cache.get_results(query) {
+        if cache.get_results(query).is_some() {
             return Ok(cache);
         }
         let mut results: Vec<LauncherResult> = vec![];
@@ -337,8 +338,8 @@ impl Query {
         // TODO: save search queries, exec commands
 
         // Command
-        if query.starts_with(':') {
-            if let Some((cmd, param)) = query[1..].trim().split_once(' ') {
+        if let Some(stripped) = query.strip_prefix(':') {
+            if let Some((cmd, param)) = stripped.trim().split_once(' ') {
                 results.extend(
                     LauncherResult::Command(cmd.trim().to_string(), param.trim().to_string())
                         .prerun_command(&cache)?,
@@ -354,7 +355,7 @@ impl Query {
         }
 
         // Url
-        let query_clone = query.to_string().clone();
+        let query_clone = query.to_string();
         let lookup_host_thread = thread::spawn(move || lookup_host(&query_clone));
 
         // fuzzy search app / bin / opened files
@@ -421,7 +422,7 @@ fn run_command(cmd: &str, param: &str) -> Result<bool, Box<dyn Error>> {
             Ok(false)
         }
         "exec" => {
-            spawn_process(&format!("{}", param))?.wait()?;
+            spawn_process(param)?.wait()?;
             Ok(true)
         }
         "update" => {
