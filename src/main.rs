@@ -54,11 +54,17 @@ fn main() -> Result<(), Box<dyn Error>> {
                 let config = Arc::clone(&config);
                 let backend_cache = Arc::clone(&backend_cache);
                 thread::spawn(move || {
-                    let new_cache = {
+                    let mut new_cache = {
                         let inner = backend_cache.lock().unwrap().clone();
                         Query::from(s.as_str()).parse(&config, inner).unwrap()
                     };
-                    *backend_cache.lock().unwrap() = new_cache;
+                    let mut inner = backend_cache.lock().unwrap();
+                    for f in new_cache.file_entries {
+                        inner.file_entries.insert(f);
+                    }
+                    if let Some(r) = new_cache.search_results.remove(s.as_str()) {
+                        inner.search_results.insert(s, r);
+                    }
                 });
             }
         }

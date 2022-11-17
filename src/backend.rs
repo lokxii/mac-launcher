@@ -267,23 +267,21 @@ impl Cache {
                     .par_iter()
                     .filter_map(|x| {
                         if query.len() <= x.name.len() {
-                            Some((fuse.search(pattern.as_ref(), &x.name)?, Arc::clone(x)))
+                            let result = fuse.search(pattern.as_ref(), &x.name)?;
+                            let coverage = (x.name.len() * 512
+                                - result
+                                    .ranges
+                                    .iter()
+                                    .map(|range| range.end - range.start)
+                                    .sum::<usize>()
+                                    * 512)
+                                / x.name.len();
+                            Some(((result.score * 512.0) as i64, coverage, Arc::clone(x)))
                         } else {
                             None
                         }
                     })
-                    .map(|e| {
-                        let coverage = (e.1.name.len()
-                            - e.0
-                                .ranges
-                                .iter()
-                                .map(|range| range.end - range.start)
-                                .sum::<usize>()) as f64
-                            / e.1.name.len() as f64
-                            * 1000.0;
-                        ((e.0.score * 1000.0) as i64, coverage as i64, e.1)
-                    })
-                    .collect::<Vec<(i64, i64, Arc<FileEntry>)>>();
+                    .collect::<Vec<(i64, usize, Arc<FileEntry>)>>();
                 fuzzy_search_results.sort_unstable_by_key(|e| (e.0, e.1));
                 fuzzy_search_results
                     .iter()
@@ -323,14 +321,17 @@ impl Query {
         Query(s.to_string())
     }
 
-    pub fn parse(&self, config: &Config, mut cache: Cache) -> io::Result<Cache> {
+    // return new Cache entries only
+    pub fn parse(&self, config: &Config, cache: Cache) -> io::Result<Cache> {
+        let mut delta = Cache::new();
+
         let query = self.0.trim();
         if query.is_empty() {
-            return Ok(cache);
+            return Ok(delta);
         }
 
         if cache.get_results(query).is_some() {
-            return Ok(cache);
+            return Ok(delta);
         }
         let mut results: Vec<LauncherResult> = vec![];
 
@@ -350,8 +351,8 @@ impl Query {
                         .prerun_command(&cache)?,
                 );
             }
-            cache.add_results(query, results);
-            return Ok(cache);
+            delta.add_results(query, results);
+            return Ok(delta);
         }
 
         // Url
@@ -378,8 +379,8 @@ impl Query {
             query.to_string(),
         ));
 
-        cache.add_results(query, results);
-        return Ok(cache);
+        delta.add_results(query, results);
+        return Ok(delta);
     }
 
     // TODO: more rules
