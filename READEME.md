@@ -19,3 +19,4 @@ Example **skhd** rule
 ## Todo list
 - [ ] add shortcut commands
 - [ ] finish find command to find + open files
+- [ ] write a UI with iced instead of using terminal --> how to open terminal to run command?
