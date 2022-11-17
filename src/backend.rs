@@ -131,10 +131,10 @@ impl LauncherResult {
 
     pub fn get_string(&self) -> String {
         match self {
-            LauncherResult::Command(cmd, param) => format!("Cmd | :{} {}", cmd, param),
-            LauncherResult::Url(url) => format!("Url | {}", url),
-            LauncherResult::App(app) => format!("App | {}", app),
-            LauncherResult::Bin(bin) => format!("Bin | {}", bin),
+            LauncherResult::Command(cmd, param) => format!("Cmd  | :{} {}", cmd, param),
+            LauncherResult::Url(url) => format!("Url  | {}", url),
+            LauncherResult::App(app) => format!("App  | {}", app),
+            LauncherResult::Bin(bin) => format!("Bin  | {}", bin),
             LauncherResult::File(file) => format!("File | {}", file),
         }
     }
@@ -428,7 +428,7 @@ fn run_command(cmd: &str, param: &str) -> Result<bool, Box<dyn Error>> {
         }
         "update" => {
             spawn_process(&format!(
-                "cd {} && cargo build --release",
+                "cd {} && git pull && cargo build --release",
                 env!("CARGO_MANIFEST_DIR")
             ))?
             .wait()?;

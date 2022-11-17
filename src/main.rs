@@ -1,8 +1,5 @@
-mod backend;
-mod frontend;
-
-use backend::*;
-use frontend::*;
+use launcher::backend::*;
+use launcher::frontend::*;
 use std::{
     error::Error,
     io,
@@ -10,8 +7,6 @@ use std::{
     sync::{mpsc, Arc, Mutex, TryLockError},
     thread,
 };
-#[macro_use]
-extern crate lazy_static;
 
 macro_rules! mutex {
     ($l:ident $op:tt $r:expr) => {
