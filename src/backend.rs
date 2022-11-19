@@ -245,12 +245,16 @@ impl Cache {
                 let mut fuzzy_search_results = self
                     .file_entries
                     .par_iter()
-                    .filter_map(|x| Some((skim.fuzzy_match(&x.name, query)?, Arc::clone(x))))
-                    .collect::<Vec<(i64, Arc<FileEntry>)>>();
-                fuzzy_search_results.sort_unstable_by_key(|e| Reverse(e.0));
+                    .filter_map(|x| {
+                        let (score, indices) = skim.fuzzy_indices(&x.name, query)?;
+                        let coverage = indices.len() * 1024 / x.name.len();
+                        Some((score, coverage, Arc::clone(&x)))
+                    })
+                    .collect::<Vec<(i64, usize, Arc<FileEntry>)>>();
+                fuzzy_search_results.sort_unstable_by_key(|e| (Reverse(e.0), Reverse(e.1)));
                 fuzzy_search_results
                     .iter()
-                    .map(|e| Arc::clone(&e.1))
+                    .map(|e| Arc::clone(&e.2))
                     .collect()
             }
 
