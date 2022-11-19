@@ -8,29 +8,18 @@ use std::time::Duration;
 fn searching(c: &mut Criterion) {
     let queries = [
         "Whatsapp",
-        "Telegram",
-        "VPN",
         "App Store",
-        "music",
-        "settin",
-        "calculator",
-        "safa",
-        "fish",
         "ssh",
         "acitivi moni",
-        "alsdkj;sl",
         " 38y lksdjhf o8",
-        "P* LAS DLK#I",
         "(@ OIJDNF O#(P(UQ {)( HIL*EYP IXZKLJHkcjhdflkjshlfkysi8h )})))",
         ":search",
         ":exec",
-        ":update",
-        ":ioay4 kjhdfgio 48 lkjdfhs",
         ":p9383 AUHW#*(Y LIHFP#*(YUPOA*U))",
     ];
     let config = Arc::new(Config::from_file(&CONFIG_PATH));
     let cache = Arc::new(Mutex::new(Cache::init(&config)));
-    c.bench_function("running backend with 20 queries multithreaded", |b| {
+    c.bench_function("running backend with 9 queries multithreaded", |b| {
         b.iter(|| {
             for query in queries {
                 for i in 0..query.len() {
@@ -60,7 +49,7 @@ fn searching(c: &mut Criterion) {
 criterion_group! {
     name = benches;
     // This can be any expression that returns a `Criterion` object.
-    config = Criterion::default().significance_level(0.1).sample_size(10);
+    config = Criterion::default().sample_size(10);
     targets = searching
 }
 criterion_main!(benches);

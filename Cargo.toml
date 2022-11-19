@@ -25,3 +25,7 @@ features = ["html_reports"]
 path = "bench/searching.rs"
 name = "searching"
 harness = false
+
+[[bin]]
+name = "launcher"
+bench = false
