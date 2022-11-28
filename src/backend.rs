@@ -191,18 +191,6 @@ impl Cache {
                     let path = path.unwrap();
 
                     let name = into_string!(path.file_name());
-                    let name = if let FileEntryType::App = r#type {
-                        if name.starts_with('.') {
-                            continue;
-                        }
-                        if let Some((name, _)) = name.split_once('.') {
-                            name.to_string()
-                        } else {
-                            name
-                        }
-                    } else {
-                        name
-                    };
                     self.file_entries.insert(Arc::new(FileEntry {
                         file_type: r#type,
                         full_path: into_string!(path.path()),
