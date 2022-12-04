@@ -23,8 +23,8 @@ use url::Url;
 // TODO: use config file
 
 lazy_static! {
-    pub static ref CONFIG_PATH: String =
-        env::var("HOME").unwrap() + "/.config/launcher/launcher.toml";
+    pub static ref HOME_PATH: String = env::var("HOME").unwrap();
+    pub static ref CONFIG_PATH: String = HOME_PATH.to_string() + "/.config/launcher/launcher.toml";
 }
 
 #[derive(Deserialize, Serialize)]
@@ -42,6 +42,7 @@ impl Config {
                 "/Applications".to_string(),
                 "/System/Applications".to_string(),
                 "/System/Applications/Utilities".to_string(),
+                "/System/Library/CoreServices/Applications".to_string(),
             ],
             editor: "hx".to_string(),
             results_len: 20,
@@ -180,13 +181,43 @@ impl Cache {
         };
     }
 
+    fn parent_entry<P>(location: P) -> FileEntry
+    where
+        P: AsRef<Path>,
+    {
+        let path = Path::new(location.as_ref());
+        let parent = path.parent().unwrap_or(Path::new(""));
+        let full_path = into_string!(parent);
+        let full_path = if full_path != "/" {
+            full_path + "/"
+        } else {
+            full_path
+        };
+        let name = if let Some(name) = parent.file_name() {
+            into_string!(name) + "/"
+        } else {
+            String::from("/")
+        };
+        FileEntry {
+            file_type: FileEntryType::File,
+            full_path,
+            name,
+        }
+    }
+
     fn add_dir<T>(&mut self, locations: T, r#type: FileEntryType)
     where
         T: IntoIterator,
         <T as IntoIterator>::Item: AsRef<Path>,
     {
         for location in locations {
-            if let Ok(dir) = fs::read_dir(location) {
+            if let Ok(dir) = fs::read_dir(&location) {
+                // Add the director it self. Mark it as `file`
+                {
+                    let entry = Cache::parent_entry(&location);
+                    self.file_entries.insert(Arc::new(entry));
+                }
+                // Then the directory content
                 for path in dir {
                     let path = path.unwrap();
 
@@ -208,6 +239,7 @@ impl Cache {
             &env::var("PATH").unwrap().split(':').collect::<Vec<&str>>(),
             FileEntryType::Bin,
         );
+        cache.add_dir(&[HOME_PATH.to_string()], FileEntryType::File);
         return cache;
     }
 
@@ -360,6 +392,11 @@ impl Query {
         // File path
         if Path::new(query).exists() {
             results.push(LauncherResult::File(query.to_string()));
+        }
+        // Relative to $HOME directory
+        let relative = HOME_PATH.clone() + "/" + query;
+        if Path::new(&relative).exists() {
+            results.push(LauncherResult::File(relative));
         }
 
         if let Ok(Ok(_)) = lookup_host_thread.join() {
