@@ -14,7 +14,8 @@ use std::{
     hash::{Hash, Hasher},
     io,
     path::Path,
-    process::{Child, Command},
+    process::Command,
+    os::unix::process::CommandExt,
     sync::Arc,
     thread,
 };
@@ -85,13 +86,13 @@ impl LauncherResult {
                 return run_command(cmd, param);
             }
             Self::Url(url) => {
-                spawn_process(&format!("open '{}'", url))?.wait()?;
+                exec_process(&format!("open '{}'", url));
             }
             Self::App(path) => {
-                spawn_process(&format!("open '{}'", path))?.wait()?;
+                exec_process(&format!("open '{}'", path));
             }
             Self::Bin(path) => {
-                spawn_process(&format!("{}", path))?.wait()?;
+                exec_process(&format!("{}", path));
                 return Ok(true);
             }
             Self::File(path) => {
@@ -103,9 +104,9 @@ impl LauncherResult {
                     .iter()
                     .any(|s| magic.to_lowercase().contains(s))
                 {
-                    spawn_process(&format!("{} '{}'", config.editor, path))?.wait()?;
+                    exec_process(&format!("{} '{}'", config.editor, path));
                 } else {
-                    spawn_process(&format!("open '{}'", path))?.wait()?;
+                    exec_process(&format!("open '{}'", path));
                 }
             }
         };
@@ -438,8 +439,8 @@ pub fn new_magic_cookie() -> Result<Magic, FileMagicError> {
     return Ok(cookie);
 }
 
-fn spawn_process(s: &str) -> io::Result<Child> {
-    return Command::new("bash").arg("-l").arg("-c").arg(s).spawn();
+fn exec_process(s: &str) -> io::Error {
+    return Command::new("bash").arg("-l").arg("-c").arg(s).exec();
 }
 
 fn run_command(cmd: &str, param: &str) -> Result<bool, Box<dyn Error>> {
@@ -447,20 +448,19 @@ fn run_command(cmd: &str, param: &str) -> Result<bool, Box<dyn Error>> {
         "search" => {
             let mut url = Url::parse("https://www.google.com/search?")?;
             url.query_pairs_mut().append_pair("q", param);
-            spawn_process(&format!("open '{}'", url.as_str()))?.wait()?;
+            exec_process(&format!("open '{}'", url.as_str()));
 
             Ok(false)
         }
         "exec" => {
-            spawn_process(param)?.wait()?;
+            exec_process(param);
             Ok(true)
         }
         "update" => {
-            spawn_process(&format!(
+            exec_process(&format!(
                 "cd {} && git pull && cargo build --release",
                 env!("CARGO_MANIFEST_DIR")
-            ))?
-            .wait()?;
+            ));
             Ok(true)
         }
         &_ => Ok(false),

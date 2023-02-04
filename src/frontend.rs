@@ -1,18 +1,19 @@
 use crate::backend::LauncherResult;
+use backtrace::Backtrace;
 use crossterm::{
     cursor,
     event::{poll, read, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers},
     execute,
     terminal::{
-        disable_raw_mode, enable_raw_mode, Clear, ClearType, EnterAlternateScreen,
-        LeaveAlternateScreen,
+        disable_raw_mode, enable_raw_mode, Clear, ClearType,
+        EnterAlternateScreen, LeaveAlternateScreen,
     },
 };
+use std::time::Duration;
 use std::{
     error::Error,
     io::{self, Stdout},
 };
-use std::{io::Write, time::Duration};
 use tui::{
     backend::CrosstermBackend,
     layout::{Constraint, Direction, Layout},
@@ -39,6 +40,8 @@ impl App {
     pub fn init(prompt: &str) -> Result<App, io::Error> {
         std::panic::set_hook(Box::new(move |x| {
             cleanup_terminal();
+            let bt = Backtrace::new();
+            println!("{:?}", bt);
             print!("{:?}", x);
         }));
 
@@ -60,7 +63,10 @@ impl App {
         })
     }
 
-    pub fn update<'a>(&'a mut self, list: &'a [LauncherResult]) -> Result<&'a mut App, io::Error> {
+    pub fn update<'a>(
+        &'a mut self,
+        list: &'a [LauncherResult],
+    ) -> Result<&'a mut App, io::Error> {
         let list = if self.query.is_empty() { &[] } else { list };
         self.list_len = list.len();
         self.fix_selection();
@@ -68,7 +74,9 @@ impl App {
         self.terminal.draw(|f| {
             let chunks = Layout::default()
                 .direction(Direction::Vertical)
-                .constraints([Constraint::Length(3), Constraint::Min(0)].as_ref())
+                .constraints(
+                    [Constraint::Length(3), Constraint::Min(0)].as_ref(),
+                )
                 .split(f.size());
             // input field
             let block = Block::default().borders(Borders::ALL);
@@ -89,7 +97,9 @@ impl App {
                 + &completion_content
                     .clone()
                     .unwrap_or_else(|| self.query.clone());
-            let len = input_field.len();
+            let len = input_field
+                .chars()
+                .fold(0, |acc, x| acc + 1 + (x.len_utf8() > 1) as usize);
             let input_field = Text::from(Span::from(input_field));
             let paragraph = Paragraph::new(input_field).block(block);
             f.render_widget(paragraph, chunks[0]);
@@ -118,12 +128,15 @@ impl App {
     fn replace_query(&mut self) {
         if let Some(s) = &self.completion_content {
             self.query = s.to_string();
-            self.cursor_index = self.query.len();
+            self.cursor_index = self.query.chars().count();
             self.completion = false;
         }
     }
 
-    pub fn wait_input(&mut self, index: &mut Option<usize>) -> Result<bool, Box<dyn Error>> {
+    pub fn wait_input(
+        &mut self,
+        index: &mut Option<usize>,
+    ) -> Result<bool, Box<dyn Error>> {
         loop {
             if !poll(Duration::from_millis(30))? {
                 return Ok(false);
@@ -135,7 +148,9 @@ impl App {
                 state: _,
             }) = read()?
             {
-                if code == KeyCode::Char('c') && modifiers.contains(KeyModifiers::CONTROL) {
+                if code == KeyCode::Char('c')
+                    && modifiers.contains(KeyModifiers::CONTROL)
+                {
                     return Ok(true);
                 }
                 macro_rules! move_selection {
@@ -161,7 +176,18 @@ impl App {
                         if self.cursor_index == self.query.len() {
                             self.query.push(ch);
                         } else {
-                            self.query.insert(self.cursor_index, ch);
+                            // insert Char into Chars
+                            self.query = self
+                                .query
+                                .chars()
+                                .take(self.cursor_index)
+                                .collect::<String>()
+                                + &ch.to_string()
+                                + &self
+                                    .query
+                                    .chars()
+                                    .skip(self.cursor_index)
+                                    .collect::<String>();
                         }
                         self.cursor_index += 1;
                         return Ok(false);
@@ -169,8 +195,14 @@ impl App {
                     KeyCode::Backspace | KeyCode::Delete => {
                         self.completion = false;
                         if self.cursor_index > 0 {
-                            self.query = self.query[0..self.cursor_index - 1].to_string()
-                                + &self.query[self.cursor_index..];
+                            self.query = self
+                                .query
+                                .chars()
+                                .take(self.cursor_index - 1)
+                                .chain(
+                                    self.query.chars().skip(self.cursor_index),
+                                )
+                                .collect();
                             self.cursor_index -= 1;
                         }
                         return Ok(false);
@@ -185,16 +217,13 @@ impl App {
                     }
                     KeyCode::Left => {
                         self.replace_query();
-                        if self.cursor_index > 0 {
-                            self.cursor_index -= 1;
-                        }
+                        self.cursor_index -= (self.cursor_index > 0) as usize;
                         return Ok(false);
                     }
                     KeyCode::Right => {
                         self.replace_query();
-                        if self.cursor_index < self.query.len() {
-                            self.cursor_index += 1;
-                        }
+                        self.cursor_index +=
+                            (self.cursor_index < self.query.len()) as usize;
                         return Ok(false);
                     }
                     KeyCode::Enter => {
@@ -219,7 +248,8 @@ impl App {
     pub fn exit(&mut self) {
         if self.running {
             disable_raw_mode().unwrap();
-            execute!(self.terminal.backend_mut(), LeaveAlternateScreen,).unwrap();
+            execute!(self.terminal.backend_mut(), LeaveAlternateScreen,)
+                .unwrap();
             self.terminal.show_cursor().unwrap();
             self.running = false
         }
